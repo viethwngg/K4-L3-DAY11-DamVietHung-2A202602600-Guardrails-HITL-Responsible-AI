@@ -19,6 +19,12 @@ import asyncio
 import sys
 from pathlib import Path
 
+# Keep Vietnamese status messages printable in Windows terminals that default
+# to a legacy code page.
+for stream in (sys.stdout, sys.stderr):
+    if hasattr(stream, "reconfigure"):
+        stream.reconfigure(encoding="utf-8", errors="replace")
+
 # Cho phép chạy ``python src/main.py`` từ gốc repo
 _SRC_DIR = Path(__file__).resolve().parent
 if str(_SRC_DIR) not in sys.path:

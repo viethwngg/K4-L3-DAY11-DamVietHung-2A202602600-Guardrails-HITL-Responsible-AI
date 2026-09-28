@@ -21,6 +21,13 @@ from core.config import (
 )
 
 
+def chat_completion_temperature_kwargs(model: str, temperature: float) -> dict:
+    """Return temperature options accepted by the selected OpenAI model."""
+    if model.lower().startswith("gpt-5.6"):
+        return {}
+    return {"temperature": temperature}
+
+
 @dataclass
 class OpenAIAgent:
     name: str
@@ -68,7 +75,7 @@ class OpenAIRunner:
                 {"role": "system", "content": agent.instruction},
                 {"role": "user", "content": user_message},
             ],
-            temperature=self.temperature,
+            **chat_completion_temperature_kwargs(self.model, self.temperature),
         )
         text = (completion.choices[0].message.content or "").strip()
 

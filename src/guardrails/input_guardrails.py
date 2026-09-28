@@ -11,6 +11,7 @@ Status convention (không dùng True/False mơ hồ):
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Literal
 
 from google.genai import types
@@ -21,6 +22,17 @@ from core.config import ALLOWED_TOPICS, BLOCKED_TOPICS
 
 # Quyết định rõ ràng — tránh đảo nghĩa True/False
 InputStatus = Literal["ALLOW", "BLOCK"]
+
+_INVISIBLE_CHARACTERS = dict.fromkeys(
+    map(ord, "\u200b\u200c\u200d\ufeff\u2060"), None
+)
+
+
+def _normalize_security_text(text: str) -> str:
+    """Normalize equivalent Unicode and remove common invisible separators."""
+    normalized = unicodedata.normalize("NFKC", text or "")
+    normalized = normalized.translate(_INVISIBLE_CHARACTERS)
+    return re.sub(r"\s+", " ", normalized).strip()
 
 
 # ============================================================
@@ -51,14 +63,22 @@ def detect_injection(user_input: str) -> InputStatus:
     Returns:
         ``"BLOCK"`` if injection detected (chặn), ``"ALLOW"`` otherwise (cho qua).
     """
-    INJECTION_PATTERNS = [
-        # TODO: Add at least 5 regex patterns
-        # Example:
-        # r"ignore (all )?(previous|above) instructions",
+    injection_patterns = [
+        r"\bignore\s+(?:all\s+)?(?:previous|prior|above)?\s*(?:instructions?|rules?|prompts?)\b",
+        r"\byou\s+are\s+now\b",
+        r"\b(?:system|developer)\s+(?:prompt|instructions?)\b",
+        r"\b(?:reveal|show|display|leak|disclose)\b.{0,80}\b(?:instructions?|prompt|secret|password|api\s*key)\b",
+        r"\bpretend\s+(?:that\s+)?you\s+are\b",
+        r"\bact\s+as\s+(?:an?\s+)?(?:unrestricted|unfiltered|uncensored)\b",
+        r"\b(?:bypass|disable|remove)\b.{0,50}\b(?:guardrails?|safety|filters?|restrictions?)\b",
+        r"\b(?:jailbreak|developer\s+mode|do\s+anything\s+now|DAN)\b",
+        r"\bbỏ\s+qua\b.{0,50}\b(?:hướng\s+dẫn|quy\s+tắc)\b",
+        r"\btiết\s+lộ\b.{0,50}\b(?:mật\s+khẩu|khóa\s+api|thông\s+tin\s+nội\s+bộ)\b",
     ]
 
-    for pattern in INJECTION_PATTERNS:
-        if re.search(pattern, user_input, re.IGNORECASE):
+    normalized_input = _normalize_security_text(user_input)
+    for pattern in injection_patterns:
+        if re.search(pattern, normalized_input, re.IGNORECASE | re.DOTALL):
             return "BLOCK"
     return "ALLOW"
 
@@ -84,14 +104,16 @@ def topic_filter(user_input: str) -> InputStatus:
         ``"BLOCK"`` = chặn (off-topic hoặc topic cấm).
         ``"ALLOW"`` = cho qua (câu banking hợp lệ).
     """
-    input_lower = user_input.lower()
+    input_normalized = unicodedata.normalize("NFKD", user_input or "")
+    input_normalized = "".join(
+        char for char in input_normalized if not unicodedata.combining(char)
+    ).casefold()
 
-    # TODO: Implement logic:
-    # 1. If input contains any blocked topic -> return "BLOCK"
-    # 2. If input doesn't contain any allowed topic -> return "BLOCK"
-    # 3. Otherwise -> return "ALLOW"
-
-    pass  # Replace with your implementation
+    if any(topic.casefold() in input_normalized for topic in BLOCKED_TOPICS):
+        return "BLOCK"
+    if not any(topic.casefold() in input_normalized for topic in ALLOWED_TOPICS):
+        return "BLOCK"
+    return "ALLOW"
 
 
 # ============================================================
@@ -144,14 +166,19 @@ class InputGuardrailPlugin(base_plugin.BasePlugin):
         self.total_count += 1
         text = self._extract_text(user_message)
 
-        # TODO: Implement logic:
-        # 1. Call detect_injection(text)
-        #    - If "BLOCK": increment blocked_count, return self._block_response("...")
-        # 2. Call topic_filter(text)
-        #    - If "BLOCK": increment blocked_count, return self._block_response("...")
-        # 3. If both return "ALLOW": return None (let message through)
+        if detect_injection(text) == "BLOCK":
+            self.blocked_count += 1
+            return self._block_response(
+                "Request blocked: possible prompt injection detected."
+            )
 
-        pass  # Replace with your implementation
+        if topic_filter(text) == "BLOCK":
+            self.blocked_count += 1
+            return self._block_response(
+                "Request blocked: VinBank can only assist with banking topics."
+            )
+
+        return None
 
 
 # ============================================================
